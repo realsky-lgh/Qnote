@@ -369,15 +369,44 @@ class NoteSheetWindow(QWidget):
         self.paper_frame.update()
 
     def update_pagination_label(self):
-        total = self.storage.get_total_count()
-        # Find index in recent list
-        all_notes = self.storage.get_all_notes_summary(limit=200)
-        curr_idx = 1
-        for i, n in enumerate(all_notes):
-            if n["id"] == self.current_note_id:
-                curr_idx = len(all_notes) - i
-                break
-        self.lbl_history.setText(f"{curr_idx}/{total}")
+        if not self.current_note_id:
+            return
+        pos, total = self.storage.get_note_position(self.current_note_id)
+        self.lbl_history.setText(f"{pos}/{total}")
+        
+        # Update button states for visual feedback
+        has_prev = pos > 1
+        has_next = pos < total
+        self.btn_prev.setEnabled(has_prev)
+        self.btn_next.setEnabled(has_next)
+        
+        # Subtle opacity feedback when at boundary
+        self.btn_prev.setStyleSheet(self._get_nav_btn_style(has_prev))
+        self.btn_next.setStyleSheet(self._get_nav_btn_style(has_next))
+
+    def _get_nav_btn_style(self, enabled: bool) -> str:
+        is_dark = self.current_theme.is_dark
+        if enabled:
+            btn_bg = "rgba(255, 255, 255, 0.12)" if is_dark else "rgba(0, 0, 0, 0.07)"
+            btn_hover = "rgba(255, 255, 255, 0.22)" if is_dark else "rgba(0, 0, 0, 0.14)"
+            btn_color = "#E0E0E0" if is_dark else "#333333"
+        else:
+            btn_bg = "transparent"
+            btn_hover = "transparent"
+            btn_color = "rgba(160, 160, 160, 0.35)"
+            
+        return f"""
+            QPushButton {{
+                background: {btn_bg};
+                border: none;
+                border-radius: 6px;
+                font-size: 11px;
+                color: {btn_color};
+            }}
+            QPushButton:hover {{
+                background: {btn_hover};
+            }}
+        """
 
     def apply_theme(self, theme: PaperTheme):
         self.current_theme = theme
@@ -423,7 +452,7 @@ class NoteSheetWindow(QWidget):
         self.lbl_title.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {header_text_color};")
         self.lbl_history.setStyleSheet(f"font-size: 11px; color: {'#999' if is_dark else '#777'};")
         
-        for btn in (self.btn_mode, self.btn_theme, self.btn_prev, self.btn_next):
+        for btn in (self.btn_mode, self.btn_theme):
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: {btn_bg};
@@ -438,6 +467,7 @@ class NoteSheetWindow(QWidget):
                 }}
             """)
 
+        self.update_pagination_label()
         self.paper_frame.update()
 
     def show_theme_menu(self):

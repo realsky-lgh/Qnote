@@ -47,6 +47,14 @@ class TestQnoteStorage(unittest.TestCase):
         
         self.assertEqual(self.storage.get_total_count(), 2)
         
+        pos1, tot1 = self.storage.get_note_position(id1)
+        self.assertEqual(pos1, 1)
+        self.assertEqual(tot1, 2)
+        
+        pos2, tot2 = self.storage.get_note_position(id2)
+        self.assertEqual(pos2, 2)
+        self.assertEqual(tot2, 2)
+        
         prev_id = self.storage.get_adjacent_note_id(id2, "prev")
         self.assertEqual(prev_id, id1)
         

@@ -39,13 +39,13 @@ class NoteStorage:
             conn.commit()
 
     def get_latest_active_note(self) -> Optional[Dict[str, Any]]:
-        """Fetch the most recently modified non-archived note."""
+        """Fetch the most recently created non-archived note."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM notes 
                 WHERE is_archived = 0 
-                ORDER BY updated_at DESC LIMIT 1
+                ORDER BY id DESC LIMIT 1
             """)
             row = cursor.fetchone()
             if row:
@@ -110,31 +110,43 @@ class NoteStorage:
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_note_position(self, note_id: int) -> tuple:
+        """
+        Returns (1-based index, total_count) for the note ordered by id ASC.
+        E.g. (3, 7) means page 3 out of 7 total notes.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) AS total FROM notes WHERE is_archived = 0")
+            total = cursor.fetchone()["total"]
+            
+            cursor.execute("""
+                SELECT COUNT(*) AS pos FROM notes 
+                WHERE is_archived = 0 AND id <= ?
+            """, (note_id,))
+            pos = cursor.fetchone()["pos"]
+            return max(1, pos), max(1, total)
+
     def get_adjacent_note_id(self, current_id: int, direction: str = "prev") -> Optional[int]:
         """
         direction:
-          'prev' (older note): updated_at < current note's updated_at
-          'next' (newer note): updated_at > current note's updated_at
+          'prev' (older note): id < current_id ORDER BY id DESC LIMIT 1
+          'next' (newer note): id > current_id ORDER BY id ASC LIMIT 1
         """
-        curr = self.get_note_by_id(current_id)
-        if not curr:
-            return None
-        curr_time = curr["updated_at"]
-
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if direction == "prev":
                 cursor.execute("""
                     SELECT id FROM notes 
-                    WHERE updated_at < ? 
-                    ORDER BY updated_at DESC LIMIT 1
-                """, (curr_time,))
+                    WHERE is_archived = 0 AND id < ? 
+                    ORDER BY id DESC LIMIT 1
+                """, (current_id,))
             else:
                 cursor.execute("""
                     SELECT id FROM notes 
-                    WHERE updated_at > ? 
-                    ORDER BY updated_at ASC LIMIT 1
-                """, (curr_time,))
+                    WHERE is_archived = 0 AND id > ? 
+                    ORDER BY id ASC LIMIT 1
+                """, (current_id,))
             row = cursor.fetchone()
             return row["id"] if row else None
 
