@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build artifacts
+build/
+*.spec
+*.manifest
+
+# Distribution / packaging (large binaries generated locally)
+dist/
+release-pkg/
+*.egg-info/
+.eggs/
+
+# SQLite databases & temp files
+*.db
+*.db-wal
+*.db-shm
+test_*.db
+
+# OS generated
+.DS_Store
+Thumbs.db
