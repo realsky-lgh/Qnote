@@ -13,6 +13,7 @@ from .storage import NoteStorage
 from .window import NoteSheetWindow
 from .hotkey import GlobalHotkeyManager
 from .single_instance import SingleInstanceManager
+from .autostart import is_autostart_enabled, set_autostart
 
 def create_tray_icon() -> QIcon:
     """Generate a clean, high-DPI minimalist quill/paper tray icon procedurally."""
@@ -49,11 +50,17 @@ class QnoteApplication:
         self.app.setApplicationVersion(APP_VERSION)
         self.app.setQuitOnLastWindowClosed(False)
 
+        self.silent = any(arg in ("--silent", "-s", "--background", "--daemon") for arg in sys_argv)
+
         # 1. Single instance check
         self.instance_mgr = SingleInstanceManager()
         if len(sys_argv) > 1 and sys_argv[1] in ("--toggle", "-t", "toggle"):
             if self.instance_mgr.try_connect_existing("toggle"):
                 print("[Qnote] Sent toggle command to running instance.")
+                sys.exit(0)
+        elif self.silent:
+            if self.instance_mgr.try_connect_existing("ping"):
+                print("[Qnote] Qnote is already running in background.")
                 sys.exit(0)
         else:
             # Check if an instance is already running
@@ -116,12 +123,23 @@ class QnoteApplication:
 
             menu.addSeparator()
 
+            # Autostart toggle option
+            action_autostart = menu.addAction("开机自动启动")
+            action_autostart.setCheckable(True)
+            action_autostart.setChecked(is_autostart_enabled())
+            action_autostart.toggled.connect(self._on_autostart_toggled)
+
+            menu.addSeparator()
+
             action_quit = menu.addAction("✕ 退出 Qnote")
             action_quit.triggered.connect(self.quit)
 
             self.tray_icon.setContextMenu(menu)
             self.tray_icon.activated.connect(self._on_tray_activated)
             self.tray_icon.show()
+
+    def _on_autostart_toggled(self, checked: bool):
+        set_autostart(checked)
 
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
@@ -136,12 +154,15 @@ class QnoteApplication:
             self.window.new_sheet()
 
     def run(self):
-        # Center the sheet initially and show it ready for input
+        # Center the sheet initially
         screen_geo = self.app.primaryScreen().availableGeometry()
         x = (screen_geo.width() - self.window.width()) // 2
         y = max(40, (screen_geo.height() - self.window.height()) // 3)
         self.window.move(x, y)
-        self.window.show_paper()
+        
+        # If launched on startup (--silent), do not popup window immediately
+        if not self.silent:
+            self.window.show_paper()
 
         ret = self.app.exec()
         self.hotkey_mgr.stop()

@@ -28,7 +28,7 @@ EOF
 chmod +x "$HOME/.local/bin/qnote"
 
 # 3. Create Desktop Entry
-echo "[3/3] 创建桌面应用图标..."
+echo "[3/4] 创建桌面应用图标..."
 cat << EOF > "$HOME/.local/share/applications/qnote.desktop"
 [Desktop Entry]
 Name=Qnote 速记纸
@@ -42,8 +42,25 @@ StartupNotify=false
 EOF
 chmod +x "$HOME/.local/share/applications/qnote.desktop"
 
+# 4. Enable Autostart on Boot
+echo "[4/4] 设置开机自动启动 (后台静默常驻)..."
+mkdir -p "$HOME/.config/autostart"
+cat << EOF > "$HOME/.config/autostart/qnote.desktop"
+[Desktop Entry]
+Type=Application
+Name=Qnote 速记纸
+Comment=极简速记纸 (双击 Alt 呼出)
+Exec=$HOME/.local/bin/qnote --silent
+Icon=accessories-text-editor
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+EOF
+chmod +x "$HOME/.config/autostart/qnote.desktop"
+
 echo "================================================="
-echo "  Qnote 安装完成！"
+echo "  Qnote 安装与开机自启设置完成！"
+echo "  • 已开启开机自动运行 (登录后后台静默常驻)"
 echo "  • 随时在终端输入: qnote"
 echo "  • 全局双击 Alt 键: 随时呼出 / 隐藏速记纸"
 echo "  • 按两次 ~ 键: 随意切换丝滑涂鸦与文字"

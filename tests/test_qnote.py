@@ -99,5 +99,15 @@ class TestQnoteInk(unittest.TestCase):
         self.assertTrue(new_engine.redo())
         self.assertEqual(len(new_engine.strokes), 1)
 
+class TestQnoteAutostart(unittest.TestCase):
+    def test_autostart_toggle(self):
+        from qnote.autostart import enable_autostart, disable_autostart, is_autostart_enabled
+        self.assertTrue(enable_autostart())
+        self.assertTrue(is_autostart_enabled())
+        self.assertTrue(disable_autostart())
+        self.assertFalse(is_autostart_enabled())
+        # Re-enable for user
+        self.assertTrue(enable_autostart())
+
 if __name__ == "__main__":
     unittest.main()
