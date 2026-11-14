@@ -6,7 +6,7 @@ immediate cursor focus, and smooth history browsing.
 """
 import time
 import json
-from PyQt6.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal, QEvent
 from PyQt6.QtWidgets import (
     QWidget, QTextEdit, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMenu, QGraphicsDropShadowEffect
@@ -202,6 +202,13 @@ class NoteSheetWindow(QWidget):
 
         root_layout.addWidget(self.paper_frame)
 
+        # Install event filters for smooth window dragging
+        self.header.installEventFilter(self)
+        self.lbl_drag.installEventFilter(self)
+        self.lbl_title.installEventFilter(self)
+        self.lbl_history.installEventFilter(self)
+        self.editor.installEventFilter(self)
+
         # Toast notification
         self.toast = ToastLabel(self.paper_frame)
 
@@ -209,15 +216,26 @@ class NoteSheetWindow(QWidget):
         header = QWidget(self.paper_frame)
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(6, 4, 6, 2)
-        h_layout.setSpacing(8)
+        h_layout.setSpacing(6)
 
-        # Drag handle / Brand icon
+        # Drag handle icon (visible affordance for window movement)
+        self.lbl_drag = QLabel("⠿", header)
+        self.lbl_drag.setToolTip("按住拖动速记纸位置 (也可按住标题栏任意空白拖动，或 Alt+鼠标左键任意拖动)")
+        self.lbl_drag.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.lbl_drag.setStyleSheet("font-size: 15px; color: rgba(120, 120, 125, 0.45); padding: 0 1px;")
+        h_layout.addWidget(self.lbl_drag)
+
+        # Brand title
         self.lbl_title = QLabel("✦ Qnote", header)
+        self.lbl_title.setToolTip("按住拖动速记纸")
+        self.lbl_title.setCursor(Qt.CursorShape.SizeAllCursor)
         self.lbl_title.setStyleSheet("font-size: 13px; font-weight: 600; color: rgba(80,80,85,0.7);")
         h_layout.addWidget(self.lbl_title)
 
         # History pagination label (e.g. "1 / 5")
         self.lbl_history = QLabel("", header)
+        self.lbl_history.setToolTip("当前页码 / 总页数")
+        self.lbl_history.setCursor(Qt.CursorShape.SizeAllCursor)
         self.lbl_history.setStyleSheet("font-size: 11px; color: rgba(120,120,125,0.6);")
         h_layout.addWidget(self.lbl_history)
 
@@ -596,14 +614,62 @@ class NoteSheetWindow(QWidget):
         else:
             self.show_paper()
 
+    def _start_window_drag(self, global_pos: QPoint):
+        """Starts smooth window dragging, prioritizing native Wayland/Windows compositor drag."""
+        handle = self.windowHandle()
+        if handle and hasattr(handle, "startSystemMove") and handle.startSystemMove():
+            self._drag_pos = None
+            return
+        self._drag_pos = global_pos - self.frameGeometry().topLeft()
+
+    def _perform_window_drag(self, global_pos: QPoint):
+        """Perform client-side drag when system move is unavailable."""
+        if self._drag_pos is not None:
+            self.move(global_pos - self._drag_pos)
+
+    def eventFilter(self, obj, event):
+        """Intercept mouse drag events on header, title, and labels so user can move freely."""
+        if obj in (self.header, self.lbl_drag, self.lbl_title, self.lbl_history):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._start_window_drag(event.globalPosition().toPoint())
+                    return True
+            elif event.type() == QEvent.Type.MouseMove:
+                if event.buttons() & Qt.MouseButton.LeftButton:
+                    self._perform_window_drag(event.globalPosition().toPoint())
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_pos = None
+                    return True
+
+        # Alt + Left Click anywhere on the text editor allows moving the sheet
+        if obj == self.editor:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                    self._start_window_drag(event.globalPosition().toPoint())
+                    return True
+            elif event.type() == QEvent.Type.MouseMove:
+                if self._drag_pos is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+                    self._perform_window_drag(event.globalPosition().toPoint())
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                if self._drag_pos is not None and event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_pos = None
+                    return True
+
+        return super().eventFilter(obj, event)
+
     # --- Mouse & Drawing Events ---
     def mousePressEvent(self, event: QMouseEvent):
-        # Window dragging on top header
+        # Window dragging if clicked on top header or if Alt key held
         if event.button() == Qt.MouseButton.LeftButton:
             header_rect = self.header.rect()
             header_global = self.header.mapTo(self, QPoint(0, 0))
-            if QRectF(header_global.x(), header_global.y(), header_rect.width(), header_rect.height()).contains(event.position()):
-                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            in_header = QRectF(header_global.x(), header_global.y(), header_rect.width(), header_rect.height()).contains(event.position())
+            alt_held = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+            if in_header or alt_held:
+                self._start_window_drag(event.globalPosition().toPoint())
                 event.accept()
                 return
 
@@ -630,7 +696,7 @@ class NoteSheetWindow(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent):
         # Dragging window
         if self._drag_pos is not None:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            self._perform_window_drag(event.globalPosition().toPoint())
             event.accept()
             return
 

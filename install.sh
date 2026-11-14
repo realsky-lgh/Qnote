@@ -27,32 +27,56 @@ exec python3 "$DIR/main.py" "\$@"
 EOF
 chmod +x "$HOME/.local/bin/qnote"
 
-# 3. Create Desktop Entry
-echo "[3/4] 创建桌面应用图标..."
+# 3. Install High-DPI App Icons & Desktop Entry
+echo "[3/4] 安装高清艺术应用图标与桌面条目..."
+mkdir -p "$HOME/.local/share/icons/hicolor/512x512/apps"
+mkdir -p "$HOME/.local/share/icons/hicolor/256x256/apps"
+mkdir -p "$HOME/.local/share/icons/hicolor/128x128/apps"
+mkdir -p "$HOME/.local/share/icons/hicolor/64x64/apps"
+mkdir -p "$HOME/.local/share/icons/hicolor/48x48/apps"
+mkdir -p "$HOME/.local/share/icons/hicolor/32x32/apps"
+
+if [ -f "$DIR/resources/qnote.png" ]; then
+    cp "$DIR/resources/qnote.png" "$HOME/.local/share/icons/qnote.png"
+    cp "$DIR/resources/qnote.png" "$HOME/.local/share/icons/hicolor/512x512/apps/qnote.png"
+    cp "$DIR/resources/qnote.png" "$HOME/.local/share/icons/hicolor/256x256/apps/qnote.png"
+fi
+
 cat << EOF > "$HOME/.local/share/applications/qnote.desktop"
 [Desktop Entry]
-Name=Qnote 速记纸
+Version=1.0
+Type=Application
+Name=Qnote
+GenericName=速记纸
 Comment=极简速记纸：双击Alt呼出，双击~切换手绘与文字，10款艺术护眼底纹
 Exec=$HOME/.local/bin/qnote
-Icon=accessories-text-editor
+Icon=qnote
 Terminal=false
-Type=Application
 Categories=Utility;Office;TextEditor;
-StartupNotify=false
+StartupWMClass=qnote
+X-GNOME-WMClass=qnote
+StartupNotify=true
 EOF
 chmod +x "$HOME/.local/share/applications/qnote.desktop"
+
+# Refresh icon cache
+gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
 # 4. Enable Autostart on Boot
 echo "[4/4] 设置开机自动启动 (后台静默常驻)..."
 mkdir -p "$HOME/.config/autostart"
 cat << EOF > "$HOME/.config/autostart/qnote.desktop"
 [Desktop Entry]
+Version=1.0
 Type=Application
-Name=Qnote 速记纸
+Name=Qnote
+GenericName=速记纸
 Comment=极简速记纸 (双击 Alt 呼出)
 Exec=$HOME/.local/bin/qnote --silent
-Icon=accessories-text-editor
+Icon=qnote
 Terminal=false
+StartupWMClass=qnote
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
 EOF

@@ -46,9 +46,15 @@ def create_tray_icon() -> QIcon:
 class QnoteApplication:
     def __init__(self, sys_argv):
         self.app = QApplication(sys_argv)
-        self.app.setApplicationName("Qnote")
+        self.app.setApplicationName("qnote")
+        self.app.setApplicationDisplayName("Qnote")
         self.app.setApplicationVersion(APP_VERSION)
+        self.app.setDesktopFileName("qnote")
         self.app.setQuitOnLastWindowClosed(False)
+
+        # Load and set official app icon for Dock and Taskbar
+        self.app_icon = self._load_app_icon()
+        self.app.setWindowIcon(self.app_icon)
 
         self.silent = any(arg in ("--silent", "-s", "--background", "--daemon") for arg in sys_argv)
 
@@ -78,6 +84,7 @@ class QnoteApplication:
 
         # 3. Floating Note Sheet Window
         self.window = NoteSheetWindow(self.storage)
+        self.window.setWindowIcon(self.app_icon)
 
         # 4. System Tray Icon
         self.tray_icon = None
@@ -88,9 +95,26 @@ class QnoteApplication:
         self.hotkey_mgr.toggle_requested.connect(self.window.toggle_visibility)
         self.hotkey_mgr.start()
 
+    def _load_app_icon(self) -> QIcon:
+        """Loads official high-res app icon from resources, fallback to tray icon."""
+        from pathlib import Path
+        candidates = []
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(Path(sys._MEIPASS) / "resources" / "qnote.png")
+        candidates.append(Path(__file__).resolve().parent.parent / "resources" / "qnote.png")
+        candidates.append(Path.home() / ".local" / "share" / "icons" / "qnote.png")
+
+        for path in candidates:
+            if path.exists():
+                return QIcon(str(path))
+
+        theme_icon = QIcon.fromTheme("qnote")
+        if not theme_icon.isNull():
+            return theme_icon
+        return create_tray_icon()
+
     def _init_tray(self):
-        icon = create_tray_icon()
-        self.app.setWindowIcon(icon)
+        icon = self.app_icon
 
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray_icon = QSystemTrayIcon(icon, self.app)

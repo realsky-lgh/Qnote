@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="qnote",
-    version="1.0.3",
+    version="1.0.4",
     description="Minimalist Scratchpad with 10 Eye-friendly Papers & Silky Ink Drawing",
     author="realsky",
     packages=find_packages(),

@@ -7,7 +7,7 @@ from pathlib import Path
 
 APP_NAME = "Qnote"
 APP_TITLE = "Qnote - 极简速记纸"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 def get_data_dir() -> Path:
     """Returns platform-specific data directory for storing database and configs."""

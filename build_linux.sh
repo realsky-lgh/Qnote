@@ -16,6 +16,8 @@ python3 -m PyInstaller \
     --name qnote-linux-x86_64 \
     --onefile \
     --windowed \
+    --icon resources/qnote.png \
+    --add-data "resources/qnote.png:resources" \
     --hidden-import PyQt6.QtCore \
     --hidden-import PyQt6.QtGui \
     --hidden-import PyQt6.QtWidgets \
