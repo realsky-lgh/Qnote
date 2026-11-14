@@ -153,6 +153,7 @@ class NoteSheetWindow(QWidget):
         
         # Double-tilde tracking for drawing mode
         self._last_tilde_time = 0.0
+        self._last_alt_window_time = 0.0
         
         # Mouse dragging the window
         self._drag_pos = None
@@ -161,11 +162,11 @@ class NoteSheetWindow(QWidget):
         self.load_or_create_initial_note()
 
     def _init_ui(self):
-        # Frameless, on-top, translucent
+        # Frameless, on-top, translucent, tool window (floats above other apps)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.SubWindow
+            Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
@@ -574,6 +575,7 @@ class NoteSheetWindow(QWidget):
 
     def show_paper(self):
         """Pops up the note paper, instantly ready for input."""
+        self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -672,7 +674,18 @@ class NoteSheetWindow(QWidget):
             else:
                 self._last_tilde_time = now
 
-        # Esc to hide
+        # Esc to hide, or Double Alt inside window to hide
+        if key == Qt.Key.Key_Alt:
+            now = time.time()
+            dt_ms = (now - self._last_alt_window_time) * 1000.0
+            if 60.0 <= dt_ms <= 550.0:
+                self._last_alt_window_time = 0.0
+                self.hide_paper()
+                event.accept()
+                return
+            else:
+                self._last_alt_window_time = now
+
         if key == Qt.Key.Key_Escape:
             self.hide_paper()
             event.accept()
