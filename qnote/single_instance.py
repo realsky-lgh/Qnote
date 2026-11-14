@@ -21,15 +21,18 @@ class SingleInstanceManager(QObject):
         """
         socket = QLocalSocket()
         socket.connectToServer(SOCKET_NAME)
-        if socket.waitForConnected(500):
+        if socket.waitForConnected(300):
             socket.write(message.encode("utf-8"))
             socket.flush()
-            socket.waitForBytesWritten(500)
+            socket.waitForBytesWritten(300)
             # Give server a moment to read before terminating socket
-            socket.waitForReadyRead(300)
+            socket.waitForReadyRead(200)
             socket.disconnectFromServer()
             return True
-        return False
+        else:
+            # Stale socket cleanup
+            QLocalServer.removeServer(SOCKET_NAME)
+            return False
 
     def start_listening(self) -> bool:
         """Starts the local server to receive IPC commands from other invocations."""

@@ -58,6 +58,8 @@ class QnoteApplication:
             if self.instance_mgr.try_connect_existing("toggle"):
                 print("[Qnote] Sent toggle command to running instance.")
                 sys.exit(0)
+            else:
+                self.silent = False
         elif self.silent:
             if self.instance_mgr.try_connect_existing("ping"):
                 print("[Qnote] Qnote is already running in background.")
