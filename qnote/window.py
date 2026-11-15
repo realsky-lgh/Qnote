@@ -6,7 +6,7 @@ immediate cursor focus, and smooth history browsing.
 """
 import time
 import json
-from PyQt6.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal, QEvent, QPointF, QSize
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QTimer, pyqtSignal, QEvent, QPointF, QSize
 from PyQt6.QtWidgets import (
     QWidget, QTextEdit, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMenu, QGraphicsDropShadowEffect
@@ -17,8 +17,8 @@ from PyQt6.QtGui import (
 )
 
 from .config import (
-    DEFAULT_WIDTH, DEFAULT_HEIGHT, WINDOW_CORNER_RADIUS,
-    DOUBLE_PRESS_INTERVAL_MS, MIN_PRESS_INTERVAL_MS
+    DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT,
+    WINDOW_CORNER_RADIUS, DOUBLE_PRESS_INTERVAL_MS, MIN_PRESS_INTERVAL_MS
 )
 from .storage import NoteStorage
 from .themes import THEMES, get_theme, PaperTheme
@@ -146,6 +146,76 @@ class TrashButton(QPushButton):
         self.setIconSize(QSize(16, 16))
 
 
+class CornerResizeGrip(QWidget):
+    """
+    Subtle tactile diagonal grip handle in the bottom-right corner of the note.
+    Displays 3 minimalist diagonal ridges and allows dragging to resize the sheet.
+    """
+    def __init__(self, parent=None, window=None):
+        super().__init__(parent)
+        self.window_ref = window
+        self._is_dark = False
+        self._hovered = False
+        self.setFixedSize(18, 18)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.setToolTip("拖拽此角调整速记纸尺寸")
+
+    def set_dark_mode(self, is_dark: bool):
+        self._is_dark = is_dark
+        self.update()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self.window_ref:
+            self.window_ref._start_window_resize(
+                Qt.Edge.BottomEdge | Qt.Edge.RightEdge,
+                event.globalPosition().toPoint()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if (event.buttons() & Qt.MouseButton.LeftButton) and self.window_ref:
+            self.window_ref._perform_window_resize(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.window_ref:
+            self.window_ref._resizing_edges = None
+            self.window_ref._persist_geometry()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._hovered:
+            color = QColor(40, 40, 45, 180) if not self._is_dark else QColor(230, 230, 240, 200)
+        else:
+            color = QColor(120, 120, 125, 80) if not self._is_dark else QColor(180, 180, 190, 70)
+
+        pen = QPen(color, 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+
+        # 3 tactile diagonal ridges in the corner
+        p.drawLine(QPointF(14, 6), QPointF(6, 14))
+        p.drawLine(QPointF(14, 10), QPointF(10, 14))
+        p.drawLine(QPointF(14, 14), QPointF(14, 14))
+        p.end()
+
+
 class NoteTextEdit(QTextEdit):
     """
     Transparent Text Area that delegates double-tilde key presses
@@ -245,8 +315,11 @@ class NoteSheetWindow(QWidget):
         self._last_tilde_time = 0.0
         self._last_alt_window_time = 0.0
         
-        # Mouse dragging the window
+        # Mouse dragging & resizing the window
         self._drag_pos = None
+        self._resizing_edges = None
+        self._resize_start_pos = None
+        self._resize_start_geo = None
 
         self._init_ui()
         self.load_or_create_initial_note()
@@ -259,7 +332,23 @@ class NoteSheetWindow(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+
+        # Restore persistent window size or fall back to defaults
+        saved_w = self.storage.get_setting("window_width")
+        saved_h = self.storage.get_setting("window_height")
+        if saved_w and saved_h:
+            try:
+                w = max(MIN_WIDTH, min(MAX_WIDTH, int(saved_w)))
+                h = max(MIN_HEIGHT, min(MAX_HEIGHT, int(saved_h)))
+                self.resize(w, h)
+            except Exception:
+                self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        else:
+            self.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+
+        self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
+        self.setMaximumSize(MAX_WIDTH, MAX_HEIGHT)
+        self.setMouseTracking(True)
 
         # Main Layout
         root_layout = QVBoxLayout(self)
@@ -268,6 +357,7 @@ class NoteSheetWindow(QWidget):
         # Paper Container Frame (for shadow and border)
         self.paper_frame = QFrame(self)
         self.paper_frame.setObjectName("paperFrame")
+        self.paper_frame.setMouseTracking(True)
         
         # Drop shadow for float feel
         shadow = QGraphicsDropShadowEffect(self)
@@ -292,20 +382,22 @@ class NoteSheetWindow(QWidget):
 
         root_layout.addWidget(self.paper_frame)
 
-        # 3. Floating Trash Can Delete Button at Bottom-Right
+        # 3. Corner Resize Grip & Floating Trash Can at Bottom-Right
+        self.resize_grip = CornerResizeGrip(self.paper_frame, window=self)
         self.btn_delete = TrashButton(self.paper_frame)
         self.btn_delete.clicked.connect(self.delete_current_note)
 
-        # Install event filters for smooth window dragging
+        # Install event filters for smooth window dragging and border resizing
         self.header.installEventFilter(self)
         self.lbl_drag.installEventFilter(self)
         self.lbl_title.installEventFilter(self)
         self.lbl_history.installEventFilter(self)
         self.editor.installEventFilter(self)
+        self.paper_frame.installEventFilter(self)
 
         # Toast notification
         self.toast = ToastLabel(self.paper_frame)
-        self._update_delete_button_pos()
+        self._update_bottom_right_widgets_pos()
 
     def _build_header(self) -> QWidget:
         header = QWidget(self.paper_frame)
@@ -583,6 +675,8 @@ class NoteSheetWindow(QWidget):
 
         if hasattr(self, "btn_delete"):
             self.btn_delete.set_dark_mode(is_dark)
+        if hasattr(self, "resize_grip"):
+            self.resize_grip.set_dark_mode(is_dark)
 
         self.update_pagination_label()
         self.paper_frame.update()
@@ -710,22 +804,33 @@ class NoteSheetWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_delete_button_pos()
+        self._update_bottom_right_widgets_pos()
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._update_delete_button_pos()
+        self._update_bottom_right_widgets_pos()
 
-    def _update_delete_button_pos(self):
-        if hasattr(self, "btn_delete") and hasattr(self, "paper_frame"):
-            margin = 8
-            w = self.btn_delete.width()
-            h = self.btn_delete.height()
-            self.btn_delete.move(
-                self.paper_frame.width() - w - margin,
-                self.paper_frame.height() - h - margin
-            )
+    def _update_bottom_right_widgets_pos(self):
+        if not hasattr(self, "paper_frame"):
+            return
+        fw = self.paper_frame.width()
+        fh = self.paper_frame.height()
+
+        # 1. Corner resize grip in the corner
+        if hasattr(self, "resize_grip"):
+            gw = self.resize_grip.width()
+            gh = self.resize_grip.height()
+            self.resize_grip.move(fw - gw - 3, fh - gh - 3)
+            self.resize_grip.raise_()
+
+        # 2. Trash can button adjacent to resize grip
+        if hasattr(self, "btn_delete"):
+            bw = self.btn_delete.width()
+            bh = self.btn_delete.height()
+            self.btn_delete.move(fw - bw - 24, fh - bh - 6)
             self.btn_delete.raise_()
+
+    _update_delete_button_pos = _update_bottom_right_widgets_pos
 
     def save_current_state(self):
         if not self.current_note_id:
@@ -754,6 +859,7 @@ class NoteSheetWindow(QWidget):
 
     def hide_paper(self):
         self.save_current_state()
+        self._persist_geometry()
         self.hide()
 
     def toggle_visibility(self):
@@ -761,6 +867,92 @@ class NoteSheetWindow(QWidget):
             self.hide_paper()
         else:
             self.show_paper()
+
+    def _determine_edges(self, pos: QPoint) -> Qt.Edge:
+        """Determines which window border/corner the point is hovering on."""
+        margin = 18
+        x = pos.x()
+        y = pos.y()
+        w = self.width()
+        h = self.height()
+
+        edges = Qt.Edge(0)
+        if y <= margin:
+            edges |= Qt.Edge.TopEdge
+        elif y >= h - margin:
+            edges |= Qt.Edge.BottomEdge
+
+        if x <= margin:
+            edges |= Qt.Edge.LeftEdge
+        elif x >= w - margin:
+            edges |= Qt.Edge.RightEdge
+
+        return edges
+
+    def _cursor_for_edges(self, edges: Qt.Edge) -> Qt.CursorShape:
+        is_top = bool(edges & Qt.Edge.TopEdge)
+        is_bottom = bool(edges & Qt.Edge.BottomEdge)
+        is_left = bool(edges & Qt.Edge.LeftEdge)
+        is_right = bool(edges & Qt.Edge.RightEdge)
+
+        if (is_top and is_left) or (is_bottom and is_right):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (is_top and is_right) or (is_bottom and is_left):
+            return Qt.CursorShape.SizeBDiagCursor
+        if is_left or is_right:
+            return Qt.CursorShape.SizeHorCursor
+        if is_top or is_bottom:
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+
+    def _start_window_resize(self, edges: Qt.Edge, global_pos: QPoint):
+        """Starts smooth window resizing, prioritizing compositor-level native resize."""
+        handle = self.windowHandle()
+        if handle and hasattr(handle, "startSystemResize"):
+            if handle.startSystemResize(edges):
+                self._resizing_edges = None
+                return
+
+        # Client-side fallback
+        self._resizing_edges = edges
+        self._resize_start_pos = global_pos
+        self._resize_start_geo = self.geometry()
+
+    def _perform_window_resize(self, global_pos: QPoint):
+        """Client-side resize logic when system resize is not supported."""
+        if not self._resizing_edges or not self._resize_start_geo:
+            return
+
+        delta = global_pos - self._resize_start_pos
+        orig = self._resize_start_geo
+        new_left = orig.left()
+        new_top = orig.top()
+        new_right = orig.right()
+        new_bottom = orig.bottom()
+
+        if self._resizing_edges & Qt.Edge.RightEdge:
+            new_w = max(MIN_WIDTH, min(MAX_WIDTH, orig.width() + delta.x()))
+            new_right = orig.left() + new_w - 1
+        elif self._resizing_edges & Qt.Edge.LeftEdge:
+            new_w = max(MIN_WIDTH, min(MAX_WIDTH, orig.width() - delta.x()))
+            new_left = orig.right() - new_w + 1
+
+        if self._resizing_edges & Qt.Edge.BottomEdge:
+            new_h = max(MIN_HEIGHT, min(MAX_HEIGHT, orig.height() + delta.y()))
+            new_bottom = orig.top() + new_h - 1
+        elif self._resizing_edges & Qt.Edge.TopEdge:
+            new_h = max(MIN_HEIGHT, min(MAX_HEIGHT, orig.height() - delta.y()))
+            new_top = orig.bottom() - new_h + 1
+
+        self.setGeometry(QRect(QPoint(new_left, new_top), QPoint(new_right, new_bottom)))
+
+    def _persist_geometry(self):
+        """Saves resized window dimensions to persistent storage."""
+        try:
+            self.storage.set_setting("window_width", str(self.width()))
+            self.storage.set_setting("window_height", str(self.height()))
+        except Exception:
+            pass
 
     def _start_window_drag(self, global_pos: QPoint):
         """Starts smooth window dragging, prioritizing native Wayland/Windows compositor drag."""
@@ -776,7 +968,40 @@ class NoteSheetWindow(QWidget):
             self.move(global_pos - self._drag_pos)
 
     def eventFilter(self, obj, event):
-        """Intercept mouse drag events on header, title, and labels so user can move freely."""
+        """Intercept mouse drag events on header, title, and labels, plus border resizing."""
+        # 1. Border resize check for child widgets (paper_frame, editor, header)
+        if obj in (self.paper_frame, self.header, self.editor):
+            if event.type() in (QEvent.Type.MouseMove, QEvent.Type.HoverMove):
+                if self._resizing_edges is not None:
+                    self._perform_window_resize(event.globalPosition().toPoint())
+                    return True
+                if self.mode != self.MODE_DRAW:
+                    win_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                    edges = self._determine_edges(win_pos)
+                    if edges != Qt.Edge(0):
+                        self.setCursor(self._cursor_for_edges(edges))
+                    else:
+                        if obj == self.editor:
+                            self.setCursor(Qt.CursorShape.IBeamCursor)
+                        elif obj in (self.header, self.lbl_title, self.lbl_drag):
+                            self.setCursor(Qt.CursorShape.SizeAllCursor)
+                        else:
+                            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+            elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                win_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                edges = self._determine_edges(win_pos)
+                if edges != Qt.Edge(0):
+                    self._start_window_resize(edges, event.globalPosition().toPoint())
+                    return True
+
+            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                if self._resizing_edges is not None:
+                    self._resizing_edges = None
+                    self._persist_geometry()
+                    return True
+
+        # 2. Header drag events for window movement
         if obj in (self.header, self.lbl_drag, self.lbl_title, self.lbl_history):
             if event.type() == QEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.LeftButton:
@@ -810,8 +1035,15 @@ class NoteSheetWindow(QWidget):
 
     # --- Mouse & Drawing Events ---
     def mousePressEvent(self, event: QMouseEvent):
-        # Window dragging if clicked on top header or if Alt key held
         if event.button() == Qt.MouseButton.LeftButton:
+            # Check window border resizing
+            edges = self._determine_edges(event.position().toPoint())
+            if edges != Qt.Edge(0):
+                self._start_window_resize(edges, event.globalPosition().toPoint())
+                event.accept()
+                return
+
+            # Window dragging if clicked on top header or if Alt key held
             header_rect = self.header.rect()
             header_global = self.header.mapTo(self, QPoint(0, 0))
             in_header = QRectF(header_global.x(), header_global.y(), header_rect.width(), header_rect.height()).contains(event.position())
@@ -842,6 +1074,12 @@ class NoteSheetWindow(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        # Resizing window
+        if self._resizing_edges is not None:
+            self._perform_window_resize(event.globalPosition().toPoint())
+            event.accept()
+            return
+
         # Dragging window
         if self._drag_pos is not None:
             self._perform_window_drag(event.globalPosition().toPoint())
@@ -857,9 +1095,21 @@ class NoteSheetWindow(QWidget):
             event.accept()
             return
 
+        # Update hover cursor for borders
+        if self.mode != self.MODE_DRAW:
+            edges = self._determine_edges(event.position().toPoint())
+            if edges != Qt.Edge(0):
+                self.setCursor(self._cursor_for_edges(edges))
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self._resizing_edges is not None:
+            self._resizing_edges = None
+            self._persist_geometry()
+
         self._drag_pos = None
         if self.mode == self.MODE_DRAW and event.button() == Qt.MouseButton.LeftButton:
             self.ink_engine.end_stroke()

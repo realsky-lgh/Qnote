@@ -169,6 +169,35 @@ class TestQnoteWindowUI(unittest.TestCase):
         self.assertNotEqual(win.current_note_id, id1)
         self.assertEqual(win.editor.toPlainText(), "")
 
+    def test_window_resize_and_settings(self):
+        from qnote.window import NoteSheetWindow
+        from PyQt6.QtCore import Qt, QPoint
+        win = NoteSheetWindow(self.storage)
+        
+        # Test edge detection
+        edges_br = win._determine_edges(QPoint(win.width() - 5, win.height() - 5))
+        self.assertTrue(bool(edges_br & Qt.Edge.RightEdge))
+        self.assertTrue(bool(edges_br & Qt.Edge.BottomEdge))
+        self.assertEqual(win._cursor_for_edges(edges_br), Qt.CursorShape.SizeFDiagCursor)
+
+        edges_left = win._determine_edges(QPoint(5, win.height() // 2))
+        self.assertTrue(bool(edges_left & Qt.Edge.LeftEdge))
+        self.assertEqual(win._cursor_for_edges(edges_left), Qt.CursorShape.SizeHorCursor)
+
+        # Test perform window resize
+        win._resizing_edges = Qt.Edge.RightEdge | Qt.Edge.BottomEdge
+        win._resize_start_pos = QPoint(100, 100)
+        win._resize_start_geo = win.geometry()
+        
+        win._perform_window_resize(QPoint(150, 160))
+        self.assertEqual(win.width(), win._resize_start_geo.width() + 50)
+        self.assertEqual(win.height(), win._resize_start_geo.height() + 60)
+
+        # Persist and check storage
+        win._persist_geometry()
+        self.assertEqual(self.storage.get_setting("window_width"), str(win.width()))
+        self.assertEqual(self.storage.get_setting("window_height"), str(win.height()))
+
 
 if __name__ == "__main__":
     unittest.main()

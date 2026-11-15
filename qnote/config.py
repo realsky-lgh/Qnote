@@ -7,7 +7,7 @@ from pathlib import Path
 
 APP_NAME = "Qnote"
 APP_TITLE = "Qnote - 极简速记纸"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 def get_data_dir() -> Path:
     """Returns platform-specific data directory for storing database and configs."""
@@ -38,6 +38,10 @@ def get_db_path() -> Path:
 # Window geometry defaults
 DEFAULT_WIDTH = 480
 DEFAULT_HEIGHT = 580
+MIN_WIDTH = 320
+MIN_HEIGHT = 280
+MAX_WIDTH = 1920
+MAX_HEIGHT = 1440
 WINDOW_CORNER_RADIUS = 16
 
 # Ink Drawing Settings

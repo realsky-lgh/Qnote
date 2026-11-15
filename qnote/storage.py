@@ -36,6 +36,27 @@ class NoteStorage:
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Fetch a persistent user preference."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str):
+        """Save a persistent user preference."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
             conn.commit()
 
     def get_latest_active_note(self) -> Optional[Dict[str, Any]]:
