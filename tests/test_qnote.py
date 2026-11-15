@@ -61,6 +61,19 @@ class TestQnoteStorage(unittest.TestCase):
         next_id = self.storage.get_adjacent_note_id(id1, "next")
         self.assertEqual(next_id, id2)
 
+    def test_delete_note(self):
+        id1 = self.storage.create_new_note(theme_id=0)
+        self.storage.save_note(id1, "Keep me", [], 0)
+        id2 = self.storage.create_new_note(theme_id=1)
+        self.storage.save_note(id2, "Delete me", [], 1)
+        
+        self.assertEqual(self.storage.get_total_count(), 2)
+        deleted = self.storage.delete_note(id2)
+        self.assertTrue(deleted)
+        self.assertEqual(self.storage.get_total_count(), 1)
+        self.assertIsNone(self.storage.get_note_by_id(id2))
+        self.assertIsNotNone(self.storage.get_note_by_id(id1))
+
 class TestQnoteThemes(unittest.TestCase):
     def test_ten_themes_exist(self):
         self.assertEqual(len(THEMES), 10)
@@ -116,6 +129,46 @@ class TestQnoteAutostart(unittest.TestCase):
         self.assertFalse(is_autostart_enabled())
         # Re-enable for user
         self.assertTrue(enable_autostart())
+
+class TestQnoteWindowUI(unittest.TestCase):
+    def setUp(self):
+        import sys
+        from PyQt6.QtWidgets import QApplication
+        self.app = QApplication.instance() or QApplication(["qnote", "-platform", "offscreen"])
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage = NoteStorage(db_path=Path(self.temp_dir) / "test_ui.db")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_trash_button_deletes_current_note(self):
+        from qnote.window import NoteSheetWindow
+        win = NoteSheetWindow(self.storage)
+        id1 = win.current_note_id
+        win.editor.setPlainText("Page 1 text")
+        win.save_current_state()
+
+        win.new_sheet()
+        id2 = win.current_note_id
+        win.editor.setPlainText("Page 2 text")
+        win.save_current_state()
+
+        self.assertEqual(self.storage.get_total_count(), 2)
+        self.assertEqual(win.current_note_id, id2)
+
+        # Click trash can button to delete current note
+        win.btn_delete.click()
+
+        self.assertEqual(self.storage.get_total_count(), 1)
+        self.assertEqual(win.current_note_id, id1)
+        self.assertEqual(win.editor.toPlainText(), "Page 1 text")
+
+        # Delete remaining note -> should auto create fresh note
+        win.btn_delete.click()
+        self.assertEqual(self.storage.get_total_count(), 1)
+        self.assertNotEqual(win.current_note_id, id1)
+        self.assertEqual(win.editor.toPlainText(), "")
+
 
 if __name__ == "__main__":
     unittest.main()

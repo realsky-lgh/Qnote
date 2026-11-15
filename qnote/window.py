@@ -6,14 +6,14 @@ immediate cursor focus, and smooth history browsing.
 """
 import time
 import json
-from PyQt6.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal, QEvent
+from PyQt6.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal, QEvent, QPointF, QSize
 from PyQt6.QtWidgets import (
     QWidget, QTextEdit, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMenu, QGraphicsDropShadowEffect
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QFont, QKeyEvent, QMouseEvent,
-    QCursor, QIcon, QAction
+    QCursor, QIcon, QAction, QPixmap, QPainterPath
 )
 
 from .config import (
@@ -54,6 +54,96 @@ class ToastLabel(QLabel):
         self.show()
         self.raise_()
         self._timer.start(duration_ms)
+
+
+def create_trash_icon(color: QColor, size: int = 16) -> QIcon:
+    """Renders a crisp, anti-aliased minimalist trash can vector icon."""
+    px_size = size * 2
+    pm = QPixmap(px_size, px_size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    s = px_size / 32.0
+    p.scale(s, s)
+
+    pen = QPen(color, 2.2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+
+    # Lid handle
+    p.drawPolyline([QPointF(12.5, 7.5), QPointF(12.5, 5.5), QPointF(19.5, 5.5), QPointF(19.5, 7.5)])
+    # Lid horizontal bar
+    p.drawLine(QPointF(7.0, 7.5), QPointF(25.0, 7.5))
+
+    # Bin body
+    body = QPainterPath()
+    body.moveTo(9.5, 9.5)
+    body.lineTo(10.5, 23.5)
+    body.quadTo(10.5, 26.0, 13.0, 26.0)
+    body.lineTo(19.0, 26.0)
+    body.quadTo(21.5, 26.0, 21.5, 23.5)
+    body.lineTo(22.5, 9.5)
+    p.drawPath(body)
+
+    # Vertical slit accents
+    p.drawLine(QPointF(13.5, 12.0), QPointF(13.5, 22.0))
+    p.drawLine(QPointF(16.0, 12.0), QPointF(16.0, 22.0))
+    p.drawLine(QPointF(18.5, 12.0), QPointF(18.5, 22.0))
+    p.end()
+    return QIcon(pm)
+
+
+class TrashButton(QPushButton):
+    """
+    Minimalist floating trash can button placed at the bottom-right of each note sheet.
+    Subtle watermark appearance by default; illuminates coral red on hover.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._is_dark = False
+        self._hovered = False
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("删除当前速记 (Ctrl+D)")
+        self.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background: rgba(220, 60, 60, 0.16);
+            }
+            QPushButton:pressed {
+                background: rgba(220, 60, 60, 0.32);
+            }
+        """)
+        self._refresh_icon()
+
+    def set_dark_mode(self, is_dark: bool):
+        self._is_dark = is_dark
+        self._refresh_icon()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._refresh_icon()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._refresh_icon()
+        super().leaveEvent(event)
+
+    def _refresh_icon(self):
+        if self._hovered:
+            color = QColor(220, 60, 60, 230)
+        elif self._is_dark:
+            color = QColor(190, 190, 195, 120)
+        else:
+            color = QColor(110, 110, 115, 100)
+        self.setIcon(create_trash_icon(color, 16))
+        self.setIconSize(QSize(16, 16))
 
 
 class NoteTextEdit(QTextEdit):
@@ -202,6 +292,10 @@ class NoteSheetWindow(QWidget):
 
         root_layout.addWidget(self.paper_frame)
 
+        # 3. Floating Trash Can Delete Button at Bottom-Right
+        self.btn_delete = TrashButton(self.paper_frame)
+        self.btn_delete.clicked.connect(self.delete_current_note)
+
         # Install event filters for smooth window dragging
         self.header.installEventFilter(self)
         self.lbl_drag.installEventFilter(self)
@@ -211,6 +305,7 @@ class NoteSheetWindow(QWidget):
 
         # Toast notification
         self.toast = ToastLabel(self.paper_frame)
+        self._update_delete_button_pos()
 
     def _build_header(self) -> QWidget:
         header = QWidget(self.paper_frame)
@@ -486,6 +581,9 @@ class NoteSheetWindow(QWidget):
                 }}
             """)
 
+        if hasattr(self, "btn_delete"):
+            self.btn_delete.set_dark_mode(is_dark)
+
         self.update_pagination_label()
         self.paper_frame.update()
 
@@ -578,6 +676,56 @@ class NoteSheetWindow(QWidget):
             self.toast.show_message("▶ 翻至更新笔记")
         else:
             self.toast.show_message("已是最新一页 (可按＋新纸)")
+
+    def delete_current_note(self):
+        """Deletes the current note sheet and navigates to adjacent note or opens a fresh sheet."""
+        if not self.current_note_id:
+            return
+
+        # Determine adjacent note before deleting
+        target_id = self.storage.get_adjacent_note_id(self.current_note_id, "prev")
+        if not target_id:
+            target_id = self.storage.get_adjacent_note_id(self.current_note_id, "next")
+
+        # Delete current note from database
+        self.storage.delete_note(self.current_note_id)
+
+        if target_id:
+            next_note = self.storage.get_note_by_id(target_id)
+            if next_note:
+                self.load_note_data(next_note)
+            else:
+                self.load_or_create_initial_note()
+        else:
+            # If all notes deleted, create and load a fresh empty sheet
+            new_id = self.storage.create_new_note(theme_id=self.current_theme.id)
+            fresh_note = self.storage.get_note_by_id(new_id)
+            self.load_note_data(fresh_note)
+
+        # Focus editor if in text mode
+        if self.mode == self.MODE_TEXT:
+            self.editor.setFocus()
+
+        self.toast.show_message("🗑 已删除当前笔记")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_delete_button_pos()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_delete_button_pos()
+
+    def _update_delete_button_pos(self):
+        if hasattr(self, "btn_delete") and hasattr(self, "paper_frame"):
+            margin = 8
+            w = self.btn_delete.width()
+            h = self.btn_delete.height()
+            self.btn_delete.move(
+                self.paper_frame.width() - w - margin,
+                self.paper_frame.height() - h - margin
+            )
+            self.btn_delete.raise_()
 
     def save_current_state(self):
         if not self.current_note_id:
@@ -760,6 +908,12 @@ class NoteSheetWindow(QWidget):
         # Ctrl+N -> New Sheet
         if (modifiers & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_N:
             self.new_sheet()
+            event.accept()
+            return
+
+        # Ctrl+D -> Delete Current Note
+        if (modifiers & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_D:
+            self.delete_current_note()
             event.accept()
             return
 
